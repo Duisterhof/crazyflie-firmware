@@ -192,6 +192,7 @@ PROJ_OBJ += deck_spi.o
 PROJ_OBJ += deck_spi3.o
 
 # Decks
+PROJ_OBJ += gas.o
 PROJ_OBJ += bigquad.o
 PROJ_OBJ += ledring12.o
 PROJ_OBJ += buzzdeck.o
