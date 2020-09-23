@@ -117,11 +117,11 @@ static void tfMicroDemoTask()
 	static setpoint_t setpoint;
 	systemWaitStart();
 
-	float ESCAPE_SPEED = 1.0;
+	float ESCAPE_SPEED = 0.5;
     float HOVER_HEIGHT = 1.0;
     float rotate_threshold = 2.0;
     // Start in the air before doing ML
-    //flyVerticalInterpolated(0.0f, HOVER_HEIGHT, 6000.0f);
+    flyVerticalInterpolated(0.0f, HOVER_HEIGHT, 6000.0f);
     vTaskDelay(M2T(500));
     distances d;
     getDistances(&d);
@@ -137,16 +137,20 @@ static void tfMicroDemoTask()
         // safety statement -- kill drone when hand is over < 20 cm
         if(d.up/10 < 20)
         {
+            flyVerticalInterpolated(HOVER_HEIGHT, 0.1f, 1000.0f);
+	        for (;;) { vTaskDelay(M2T(1000)); }
             break;
         }
 
         front_sensor = d.front*0.001;    // used for obs avoidance
 
-        if (front_sensor < rotate_threshold) {
+        if (front_sensor < rotate_threshold ) 
+        {
             yaw  = rand()%33;
             command = rand()%2+1;
         }
-        else{
+        else
+        {
             command = 0;
         }
 
@@ -175,7 +179,7 @@ static void tfMicroDemoTask()
       }
 }
 
-  // flyVerticalInterpolated(HOVER_HEIGHT, 0.1f, 1000.0f);
+    flyVerticalInterpolated(HOVER_HEIGHT, 0.1f, 1000.0f);
 	for (;;) { vTaskDelay(M2T(1000)); }
 }
 
