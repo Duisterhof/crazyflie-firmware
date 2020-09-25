@@ -7,6 +7,7 @@ how fast the chip can process these neural networks */
 #include "system.h"
 #include "commander.h"
 #include "range.h"  // get the 6axis distance measurements
+#include "log.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -16,14 +17,18 @@ how fast the chip can process these neural networks */
 #include "sysload.h"
 #include "sequencelib.h"
 #include "sensor.h"
-
+#include "task.h"
+#include "timers.h"
+#include "math.h"
+#include "tfmicrodemo.h"
+#include "estimator_kalman.h"
+#include "stabilizer_types.h"
 // uTensor related machine learning
-
 
 #define SUBTRACT_VAL 60
 #define STATE_LEN 5
 #define NUM_STATES 4
-#define YAW_INCR 8
+#define YAW_INCR 5
 //#define SENS_MIN 35000
 #define SENS_MIN 0
 #define SENS_MAX 65000
@@ -33,24 +38,25 @@ how fast the chip can process these neural networks */
 #define GOAL_THRES_COUNT 3
 #define DIST_MIN 90
 #define RAND_ACTION_RATE 30
+#define RAD2DEG 57.29578049
 
-void yaw_incr(int *yaw){
-    int yaw_out = *yaw + YAW_INCR;
-    if(yaw_out>180){
+struct Point agent_pos,goal;
+
+float yaw_incr(float yaw){
+    float yaw_out = yaw + YAW_INCR;
+    if(yaw_out>=180){
         yaw_out -= 360;
     }
-    *yaw = yaw_out;
-    return;
+    return yaw_out;
 }
 
 
-void yaw_decr(int *yaw){
-    int yaw_out = *yaw - YAW_INCR;
-    if(yaw_out<-180){
+float yaw_decr(float yaw){
+    float yaw_out = yaw - YAW_INCR;
+    if(yaw_out<=-180){
         yaw_out += 360;
     }
-    *yaw = yaw_out;
-    return;
+    return yaw_out;
 }
 
 int argmax_float(float* array, int size){
@@ -84,98 +90,154 @@ static void check_multiranger_online() {
 }
 
 
-float get_distance(uint16_t sensor_read){
-    if(sensor_read<SENS_MIN){
-        sensor_read = SENS_MIN;
-    }
-    if(sensor_read>SENS_MAX){
-        sensor_read=SENS_MAX;
-    }
-    float frac = 1.0*(float)(sensor_read-SENS_MIN)/(SENS_MAX-SENS_MIN) ;
-    return frac;
+
+// get distance between two points
+float get_distance(struct Point p1, struct Point p2)
+{
+    return sqrtf(powf((p2.x-p1.x),2)+powf((p2.y-p1.y),2));
 }
 
-
-static void update_state(uint8_t *meas_array, distances d,uint8_t dist){
-    //Step 1: move entire array by 1 state
-    for(int i = (STATE_LEN*NUM_STATES-1);i>=STATE_LEN;i--)
-    {
-        *(meas_array+i) = *(meas_array+i-STATE_LEN);
-    }
-    //Step2: update the first state
-    *(meas_array) = (uint8_t) ( d.right * 0.06375);
-    *(meas_array+1) = (uint8_t) ( d.front * 0.06375);
-    *(meas_array+2) = (uint8_t) ( d.left * 0.06375);
-    *(meas_array+3) = (uint8_t) ( d.back * 0.06375);
-    *(meas_array+4) = (uint8_t) (dist);
-
+float get_heading(struct Point p1, struct Point p2)
+{
+    return(RAD2DEG*atan2f((p2.y-p1.y),(p2.x-p1.x)));
 }
 
 static void tfMicroDemoTask()
 {
     int command = 0;
+    float yaw = 0;
+
+    int x_range = 6; // the range in which we explore
+    int y_range = 6; // the range in which we explore
 	static setpoint_t setpoint;
 	systemWaitStart();
 
-	float ESCAPE_SPEED = 0.5;
+    // time parameters
+    
+
+	float ESCAPE_SPEED = 1.0;
+    float goal_dist_thres = 0.5;
     float HOVER_HEIGHT = 1.0;
-    float rotate_threshold = 2.0;
+    float rotate_threshold = 1.0;
+    float update_time = 10.0; //set a new goal every 10 seconds
     // Start in the air before doing ML
     flyVerticalInterpolated(0.0f, HOVER_HEIGHT, 6000.0f);
     vTaskDelay(M2T(500));
     distances d;
     getDistances(&d);
+
     float front_sensor = d.front*0.001;
-    int yaw = 0;
+    float right_sensor = d.right*0.001;
+    float left_sensor = d.left*0.001;
+    float back_sensor = d.back*0.001;
+
+    bool wall_following = false;
     srand(time(NULL));
     int r = rand();
-
-    // main loop
+    int r2 = rand();
+    uint32_t tick_start = xTaskGetTickCount();
+    
+    goal.x = (float)(r%(x_range*10))/(10.)-(float)(x_range)*0.5;
+    goal.y = (float)(r2%(y_range*10))/(10.)-(float)(y_range)*0.5;
+    point_t state;
+    
     for (int j = 0; j < 10000; j++) {
+        // state = get_state();
+        estimatorKalmanGetEstimatedPos(&state);
+        agent_pos.x = state.x;
+        agent_pos.y = state.y;
         getDistances(&d);
+        float local_time = (float)(xTaskGetTickCount()-tick_start )/(1000.);
 
         // safety statement -- kill drone when hand is over < 20 cm
-        if(d.up/10 < 20)
+        // if(d.up/10 < 20)
+        // {
+        //     flyVerticalInterpolated(HOVER_HEIGHT, 0.1f, 1000.0f);
+	    //     for (;;) { vTaskDelay(M2T(1000)); }
+        //     break;
+        // }
+
+        if (local_time > update_time || get_distance(agent_pos,goal) < goal_dist_thres)
+        // if (local_time > update_time )
         {
-            flyVerticalInterpolated(HOVER_HEIGHT, 0.1f, 1000.0f);
-	        for (;;) { vTaskDelay(M2T(1000)); }
-            break;
+            tick_start = xTaskGetTickCount();
+            r = rand();
+            r2 = rand();
+            goal.x = (float)(r%(x_range*10))/(10.)-(float)(x_range)*0.5;
+            goal.y = (float)(r2%(y_range*10))/(10.)-(float)(y_range)*0.5;
+            DEBUG_PRINT("%f %f",goal.x,goal.y);
+            yaw = get_heading(agent_pos,goal);
         }
-
+        
         front_sensor = d.front*0.001;    // used for obs avoidance
+        right_sensor = d.right*0.001;
+        left_sensor = d.left*0.001;
+        back_sensor = d.back*0.001;
 
-        if (front_sensor < rotate_threshold ) 
+
+        if (front_sensor < rotate_threshold)
         {
-            yaw  = rand()%33;
-            command = rand()%2+1;
+            wall_following = true;
+            if (right_sensor >left_sensor)
+            {
+                command = 2;
+            }
+            else
+            {
+                command = 1;
+            }
         }
         else
         {
-            command = 0;
+            if (wall_following == true)
+            {
+                if( front_sensor > rotate_threshold && right_sensor > rotate_threshold && left_sensor > rotate_threshold)
+                {
+                    wall_following = false;
+                    command = 0;
+                }
+                else
+                {
+                    command = 3;
+                }  
+            }
+            else
+            {
+                command = 0;            
+            } 
         }
-
-        vTaskDelay(M2T(200));
-
+        
         switch (command) {
+          // fly forward
           case 0:
-              setHoverSetpoint(&setpoint, ESCAPE_SPEED, 0, HOVER_HEIGHT, 0);
+              yaw = get_heading(agent_pos,goal);
+              DEBUG_PRINT("%f \n",yaw);
+              setHoverSetpoint(&setpoint, ESCAPE_SPEED, 0, HOVER_HEIGHT, yaw);
               commanderSetSetpoint(&setpoint, 3);
               vTaskDelay(M2T(100));
               break;
+
+          // rotate left
           case 1:
-              for (int i = 0; i<yaw;i++) {
-                  setHoverSetpoint(&setpoint, 0, 0, HOVER_HEIGHT,54);
-                  commanderSetSetpoint(&setpoint, 3);
-                  vTaskDelay(M2T(100));
-              }
+                yaw = yaw_incr(yaw);
+                setHoverSetpoint(&setpoint, 0, 0, HOVER_HEIGHT,yaw);
+                commanderSetSetpoint(&setpoint, 3);
+                vTaskDelay(M2T(100));    
               break;
+
+            // rotate right
             case 2:
-                for (int i = 0; i<yaw;i++) {
-                    setHoverSetpoint(&setpoint, 0, 0, HOVER_HEIGHT,-54);
-                    commanderSetSetpoint(&setpoint, 3);
-                    vTaskDelay(M2T(100));
-                }
-                break;
+                yaw = yaw_decr(yaw);
+                setHoverSetpoint(&setpoint, 0, 0, HOVER_HEIGHT,yaw);
+                commanderSetSetpoint(&setpoint, 3);
+                vTaskDelay(M2T(100));    
+               break;
+            
+            case 3:
+              setHoverSetpoint(&setpoint, ESCAPE_SPEED, 0, HOVER_HEIGHT, yaw);
+              commanderSetSetpoint(&setpoint, 3);
+              vTaskDelay(M2T(100));
+              break;
       }
 }
 
@@ -205,3 +267,10 @@ const DeckDriver tf_micro_demo = {
 };
 
 DECK_DRIVER(tf_micro_demo);
+
+LOG_GROUP_START(gas_log)
+LOG_ADD(LOG_FLOAT, goal_x, &goal.x)
+LOG_ADD(LOG_FLOAT, goal_y, &goal.y)
+LOG_ADD(LOG_FLOAT, agent_x, &agent_pos.x)
+LOG_ADD(LOG_FLOAT, agent_y, &agent_pos.y)
+LOG_GROUP_STOP(gas_log)

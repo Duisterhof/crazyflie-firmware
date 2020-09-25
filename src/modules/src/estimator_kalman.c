@@ -250,10 +250,10 @@ static float procNoiseSkew = 10e-6f; // seconds per second^2 (is multiplied by d
  */
 
 // The quad's state, stored as a column vector
-typedef enum
-{
-  STATE_X, STATE_Y, STATE_Z, STATE_PX, STATE_PY, STATE_PZ, STATE_D0, STATE_D1, STATE_D2, STATE_DIM
-} stateIdx_t;
+// typedef enum
+// {
+//   STATE_X, STATE_Y, STATE_Z, STATE_PX, STATE_PY, STATE_PZ, STATE_D0, STATE_D1, STATE_D2, STATE_DIM
+// } stateIdx_t;
 
 static float S[STATE_DIM];
 

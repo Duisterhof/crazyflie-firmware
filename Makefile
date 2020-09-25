@@ -238,8 +238,10 @@ PROJ_OBJ += sequencedodge.o          # deck name: sequenceDodge
 # examples look at tfmicrodemo.c or tfmicrobenchmark.c and change the
 # following -DDECK_FORCE flag to your file. 
 CFLAGS += -DDECK_FORCE=tfMicroDemo
+# CFLAGS += -DDECK_FORCE=bcDWM1000
 # Put the name of the model you want to put in here!
 CFLAGS += -D TFMICRO_MODEL=fc_320_tflite
+
 
 
 ######################### TF Micro Compilation ##################

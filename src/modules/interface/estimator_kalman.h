@@ -80,4 +80,9 @@ void estimatorKalmanSetShift(float deltax, float deltay);
 
 void estimatorKalmanGetEstimatedPos(point_t* pos);
 
+typedef enum
+{
+  STATE_X, STATE_Y, STATE_Z, STATE_PX, STATE_PY, STATE_PZ, STATE_D0, STATE_D1, STATE_D2, STATE_DIM
+} stateIdx_t;
+
 #endif // __ESTIMATOR_KALMAN_H__
