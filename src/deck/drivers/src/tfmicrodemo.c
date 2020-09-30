@@ -8,6 +8,7 @@ how fast the chip can process these neural networks */
 #include "commander.h"
 #include "range.h"  // get the 6axis distance measurements
 #include "log.h"
+#include "param.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -23,6 +24,7 @@ how fast the chip can process these neural networks */
 #include "tfmicrodemo.h"
 #include "estimator_kalman.h"
 #include "stabilizer_types.h"
+#include "deck_analog.h"
 // uTensor related machine learning
 
 #define SUBTRACT_VAL 60
@@ -40,7 +42,10 @@ how fast the chip can process these neural networks */
 #define RAND_ACTION_RATE 30
 #define RAD2DEG 57.29578049
 
-struct Point agent_pos,goal;
+struct Point agent_pos,goal, random_point;
+float R_s;
+float R_lp = 100.0;
+uint8_t keep_flying = 0;
 
 float yaw_incr(float yaw){
     float yaw_out = yaw + YAW_INCR;
@@ -107,22 +112,21 @@ static void tfMicroDemoTask()
     int command = 0;
     float yaw = 0;
 
-    int x_range = 6; // the range in which we explore
-    int y_range = 6; // the range in which we explore
+    int x_range = 2; // the range in which we explore
+    int y_range = 2; // the range in which we explore
 	static setpoint_t setpoint;
 	systemWaitStart();
 
     // time parameters
     
-
+    float best_seen = 1000;
 	float ESCAPE_SPEED = 1.0;
     float goal_dist_thres = 0.5;
     float HOVER_HEIGHT = 1.0;
     float rotate_threshold = 1.0;
     float update_time = 10.0; //set a new goal every 10 seconds
     // Start in the air before doing ML
-    flyVerticalInterpolated(0.0f, HOVER_HEIGHT, 6000.0f);
-    vTaskDelay(M2T(500));
+
     distances d;
     getDistances(&d);
 
@@ -140,22 +144,44 @@ static void tfMicroDemoTask()
     goal.x = (float)(r%(x_range*10))/(10.)-(float)(x_range)*0.5;
     goal.y = (float)(r2%(y_range*10))/(10.)-(float)(y_range)*0.5;
     point_t state;
+    struct Point best_pos;
+    best_pos.x = 0.0;
+    best_pos.y = 0.0;
     
-    for (int j = 0; j < 10000; j++) {
-        // state = get_state();
+    float best_weight = 0.5;
+    while(keep_flying==0)
+    {
+        vTaskDelay(M2T(500));
+        R_s = (3.0/analogReadVoltage(10)-1.0)*69;
+        R_lp = 0.9*R_lp + 0.1*R_s;
+    }
+    flyVerticalInterpolated(0.0f, HOVER_HEIGHT, 6000.0f);
+    vTaskDelay(M2T(500));
+    while(keep_flying)
+    {
         estimatorKalmanGetEstimatedPos(&state);
         agent_pos.x = state.x;
         agent_pos.y = state.y;
+        // state = get_state();
+        R_s = (3.0/analogReadVoltage(10)-1.0)*69;
+        R_lp = 0.9*R_lp + 0.1*R_s;
+        if (R_lp < best_seen)
+        {
+            best_seen = R_lp;
+            best_pos = agent_pos;
+            if (R_lp < 40)
+            {
+                best_weight = 0.6;
+            }
+            else
+            {
+                best_weight = 0.3;
+            }
+            
+        }
+
         getDistances(&d);
         float local_time = (float)(xTaskGetTickCount()-tick_start )/(1000.);
-
-        // safety statement -- kill drone when hand is over < 20 cm
-        // if(d.up/10 < 20)
-        // {
-        //     flyVerticalInterpolated(HOVER_HEIGHT, 0.1f, 1000.0f);
-	    //     for (;;) { vTaskDelay(M2T(1000)); }
-        //     break;
-        // }
 
         if (local_time > update_time || get_distance(agent_pos,goal) < goal_dist_thres)
         // if (local_time > update_time )
@@ -163,8 +189,11 @@ static void tfMicroDemoTask()
             tick_start = xTaskGetTickCount();
             r = rand();
             r2 = rand();
-            goal.x = (float)(r%(x_range*10))/(10.)-(float)(x_range)*0.5;
-            goal.y = (float)(r2%(y_range*10))/(10.)-(float)(y_range)*0.5;
+            random_point.x = (float)(r%(x_range*10))/(10.)-(float)(x_range)*0.5;
+            random_point.y = (float)(r2%(y_range*10))/(10.)-(float)(y_range)*0.5;
+
+            goal.x = (1.0-best_weight)*(random_point.x-agent_pos.x) + best_weight*(best_pos.x-agent_pos.x);
+            goal.y = (1.0-best_weight)*(random_point.y-agent_pos.y) + best_weight*(best_pos.y-agent_pos.y);
             DEBUG_PRINT("%f %f",goal.x,goal.y);
             yaw = get_heading(agent_pos,goal);
         }
@@ -273,4 +302,10 @@ LOG_ADD(LOG_FLOAT, goal_x, &goal.x)
 LOG_ADD(LOG_FLOAT, goal_y, &goal.y)
 LOG_ADD(LOG_FLOAT, agent_x, &agent_pos.x)
 LOG_ADD(LOG_FLOAT, agent_y, &agent_pos.y)
+LOG_ADD(LOG_FLOAT, R_s, &R_s)
+LOG_ADD(LOG_FLOAT,R_lp, &R_lp)
 LOG_GROUP_STOP(gas_log)
+
+PARAM_GROUP_START(gas)
+PARAM_ADD(PARAM_UINT8, keep_flying, &keep_flying)
+PARAM_GROUP_STOP(gas)
