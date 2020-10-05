@@ -19,13 +19,15 @@
 
 // static float RAD2DEG = 57.29578049;
 // static float critical_laser = 0.5; // no laser ranger should ever see lower than this
-static float desired_laser = 1.5; // start correcting if a laser ranger sees smaller than this
+static float desired_laser = 2.0; // start correcting if a laser ranger sees smaller than this
 static float desired_velocity = 0.5; // speed in m/s that we aim for
 
 static bool isInit;
 static bool onGround = true;
 static bool keepFlying = false;
-// static bool wall_following = false;
+static bool wall_following = false;
+static bool determine_wall_following_direction = false;
+static int rotate_right = 0;
 static setpoint_t setpoint;
 static float_t relaVarInCtrl[NumUWB][STATE_DIM_rl];
 static float_t inputVarInCtrl[NumUWB][STATE_DIM_rl];
@@ -81,28 +83,28 @@ float get_min(float* d)
 // return 0 if 'yawing' positive is desired (ENU)
 // return 1 if 'yawing' negative is desired (ENU)
 // return 2 if no danger is present in the current movement direction
-int decide_direction(float* d, float yaw )
+int decide_direction(float* d, float desired_heading )
 {
   // making yaw positive
   // yaw is its desired direction
-  if( yaw < 0)
+  if( desired_heading < 0)
   {
-    yaw += (float)(M_PI)*2.f;
+    desired_heading += (float)(M_PI)*2.f;
   }
-  int quadrant = (int)(yaw/(float)(M_PI_2));
-  int right_laser_id = quadrant;
-  int left_laser_id = quadrant+1;
-  if ( left_laser_id == 4)
+  int quadrant = (int)(desired_heading/(float)(M_PI_2));
+  int lower_idx = quadrant;
+  int higher_idx = lower_idx+1;
+  if ( higher_idx == 4)
   {
-    left_laser_id = 0;
+    higher_idx = 0;
   }
   // there's no danger in the moving direction
-  if (d[left_laser_id] > desired_laser && d[right_laser_id] > desired_laser )
+  if (d[lower_idx] > desired_laser && d[higher_idx] > desired_laser )
   {
     return 2;
   }
   // more space left, so move in postiive ENU
-  else if (d[left_laser_id] > d[right_laser_id])
+  else if (d[higher_idx] > d[lower_idx])
   {
     return 0;
   }
@@ -243,9 +245,42 @@ void relativeControlTask(void* arg)
             float laser_val = lasers[i];
             if (laser_val < desired_laser)
             {
-              heading_accumulator += 2.0f*powf((desired_laser-laser_val),2);
+              heading_accumulator += 1.5f*powf((desired_laser-laser_val),2);
             }
           }
+
+          if (heading_accumulator > 0.0f)
+          {
+            if(wall_following == false)
+            {
+              wall_following = true;
+              determine_wall_following_direction = true;
+            }
+          }
+          else
+          {
+            wall_following = false;
+            determine_wall_following_direction = false;
+          }
+          
+          if (determine_wall_following_direction)
+          {
+            rotate_right = decide_direction(lasers,atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x)))==1;
+          }
+
+          DEBUG_PRINT("%d \n",rotate_right);
+          if (rotate_right)
+          {
+            heading_accumulator = -heading_accumulator;
+          }
+
+          if(decide_direction(lasers,atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x)))==2)
+          {
+            heading_accumulator = 0.0f;
+            wall_following = false;
+            determine_wall_following_direction = false;
+          }
+
           heading = atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x)) + heading_accumulator; // heading in deg (ENU) to desired waypoint
           vx = desired_velocity*cosf(heading);
           vy = desired_velocity*sinf(heading);
