@@ -19,10 +19,12 @@
 
 // static float RAD2DEG = 57.29578049;
 // static float critical_laser = 0.5; // no laser ranger should ever see lower than this
-static float desired_laser = 2.0; // start correcting if a laser ranger sees smaller than this
+static float desired_laser = 1.5; // start correcting if a laser ranger sees smaller than this
 static float desired_velocity = 0.5; // speed in m/s that we aim for
-
+static float release_laser = 2.0;
+static float int_accumulator = 0.0f;
 static bool isInit;
+static bool reset_wall_following = false;
 static bool onGround = true;
 static bool keepFlying = false;
 static bool wall_following = false;
@@ -39,6 +41,7 @@ static float relaCtrl_p = 2.0f;
 static float relaCtrl_i = 0.0001f;
 static float relaCtrl_d = 0.01f;
 static float wp_reached_thres = 0.2; // [m]
+static float old_heading_accumulator = 0.0;
 // static float NDI_k = 2.0f;
 static char c = 0; // monoCam
 float search_range = 10.0; // search range in meters
@@ -240,46 +243,79 @@ void relativeControlTask(void* arg)
           float heading_accumulator = 0.0f;
           //avoid obstacle
           // for all lasers
-          for (int i = 0; i<4; i++ )
+          // check if wall following
+          reset_wall_following = true;
+          for (int i =0; i<4; i++)
           {
-            float laser_val = lasers[i];
-            if (laser_val < desired_laser)
+            if (lasers[i] < release_laser)
             {
-              heading_accumulator += 1.5f*powf((desired_laser-laser_val),2);
+              
+              if (lasers[i] < desired_laser)
+              {
+                reset_wall_following = false;
+                if (wall_following == false)
+                {
+                  determine_wall_following_direction = true;
+                  wall_following = true;
+                }
+                else
+                {
+                  determine_wall_following_direction = false;
+                }
+              }
             }
           }
-
-          if (heading_accumulator > 0.0f)
+          if (reset_wall_following)
           {
-            if(wall_following == false)
+            wall_following = false;
+          }
+          if (wall_following)
+          {
+            for (int i = 0; i<4; i++ )
             {
-              wall_following = true;
-              determine_wall_following_direction = true;
+              if (lasers[i]< release_laser)
+              {
+                float laser_val = lasers[i];
+                int_accumulator += powf((desired_laser-laser_val),2)*0.01f;
+                heading_accumulator += 7.0f*((desired_laser-laser_val));
+              }
+              // else if (lasers[i] > desired_laser)
+              // {
+              //   float laser_val = lasers[i];
+              //   int_accumulator -= powf((desired_laser-laser_val),2)*0.01f;
+              //   heading_accumulator = heading_accumulator - 2.0f*powf((desired_laser-laser_val),2) ;
+              // }
+
             }
           }
           else
           {
-            wall_following = false;
-            determine_wall_following_direction = false;
+            int_accumulator = 0.0f;
+            old_heading_accumulator = 0.0f;
           }
+          
+
           
           if (determine_wall_following_direction)
           {
             rotate_right = decide_direction(lasers,atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x)))==1;
+            determine_wall_following_direction = false;
           }
 
-          DEBUG_PRINT("%d \n",rotate_right);
-          if (rotate_right)
+          heading_accumulator = 0.9f*old_heading_accumulator + 0.1f*heading_accumulator;
+          old_heading_accumulator = heading_accumulator;
+
+          if (rotate_right == 1)
           {
             heading_accumulator = -heading_accumulator;
           }
-
-          if(decide_direction(lasers,atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x)))==2)
-          {
-            heading_accumulator = 0.0f;
-            wall_following = false;
-            determine_wall_following_direction = false;
-          }
+          DEBUG_PRINT("direction: %d  wall following: %d \n",rotate_right, wall_following);
+          // if(decide_direction(lasers,atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x)))==2)
+          // {
+          //   heading_accumulator = 0.0f;
+          //   wall_following = false;
+          //   determine_wall_following_direction = false;
+          // }
 
           heading = atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x)) + heading_accumulator; // heading in deg (ENU) to desired waypoint
           vx = desired_velocity*cosf(heading);
