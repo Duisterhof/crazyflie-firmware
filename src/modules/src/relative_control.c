@@ -19,9 +19,9 @@
 
 // static float RAD2DEG = 57.29578049;
 // static float critical_laser = 0.5; // no laser ranger should ever see lower than this
-static float desired_laser = 1.5; // start correcting if a laser ranger sees smaller than this
+static float desired_laser = 2.0; // start correcting if a laser ranger sees smaller than this
 static float desired_velocity = 0.5; // speed in m/s that we aim for
-static float release_laser = 2.0;
+static float release_laser = 2.5;
 static float int_accumulator = 0.0f;
 static bool isInit;
 static bool reset_wall_following = false;
@@ -42,6 +42,8 @@ static float relaCtrl_i = 0.0001f;
 static float relaCtrl_d = 0.01f;
 static float wp_reached_thres = 0.2; // [m]
 static float old_heading_accumulator = 0.0;
+float heading = 0.0f;
+float desired_heading = 0.0f;
 // static float NDI_k = 2.0f;
 static char c = 0; // monoCam
 float search_range = 10.0; // search range in meters
@@ -188,7 +190,7 @@ void relativeControlTask(void* arg)
   // height = (float)selfID*0.1f+0.2f;
   height = 1.5f;
 
-  float heading = 0.f;
+  
   float vx = 0.f;
   float vy = 0.f;
   float wp_dist = 0.f;
@@ -226,6 +228,7 @@ void relativeControlTask(void* arg)
         goal = random_point;
         // float accumulator_obs_avoidance = 0.0f;
 
+        uint32_t follow_reset_tick = xTaskGetTickCount();
         for (int i = 0; i< 70; i++) //time before time-out
         {
           estimatorKalmanGetEstimatedPos(&state); //read agent state from kalman filter
@@ -267,17 +270,18 @@ void relativeControlTask(void* arg)
           }
           if (reset_wall_following)
           {
+            follow_reset_tick = xTaskGetTickCount();
             wall_following = false;
           }
           if (wall_following)
           {
             for (int i = 0; i<4; i++ )
             {
-              if (lasers[i]< release_laser)
+              if (lasers[i]< desired_laser)
               {
                 float laser_val = lasers[i];
                 int_accumulator += powf((desired_laser-laser_val),2)*0.01f;
-                heading_accumulator += 7.0f*((desired_laser-laser_val));
+                heading_accumulator += 1.0f*powf((desired_laser-laser_val),2);
               }
               // else if (lasers[i] > desired_laser)
               // {
@@ -291,7 +295,6 @@ void relativeControlTask(void* arg)
           else
           {
             int_accumulator = 0.0f;
-            old_heading_accumulator = 0.0f;
           }
           
 
@@ -302,8 +305,22 @@ void relativeControlTask(void* arg)
             determine_wall_following_direction = false;
           }
 
-          heading_accumulator = 0.9f*old_heading_accumulator + 0.1f*heading_accumulator;
-          old_heading_accumulator = heading_accumulator;
+          if (wall_following){
+
+            heading_accumulator = 0.7f*old_heading_accumulator + 0.3f*heading_accumulator;
+            old_heading_accumulator = heading_accumulator;
+          
+
+          
+          }
+          else if ((xTaskGetTickCount()-follow_reset_tick)> 5000)
+          {
+            old_heading_accumulator = 0.0f;
+            follow_reset_tick = xTaskGetTickCount();
+          }
+          else{
+            heading_accumulator = old_heading_accumulator;
+          }
 
           if (rotate_right == 1)
           {
@@ -318,6 +335,7 @@ void relativeControlTask(void* arg)
           // }
 
           heading = atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x)) + heading_accumulator; // heading in deg (ENU) to desired waypoint
+          desired_heading = atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x));
           vx = desired_velocity*cosf(heading);
           vy = desired_velocity*sinf(heading);
 
@@ -392,4 +410,6 @@ LOG_ADD(LOG_FLOAT,front,&lasers[0])
 LOG_ADD(LOG_FLOAT,left,&lasers[1])
 LOG_ADD(LOG_FLOAT,back,&lasers[2])
 LOG_ADD(LOG_FLOAT,right,&lasers[3])
+LOG_ADD(LOG_FLOAT,heading,&heading)
+LOG_ADD(LOG_FLOAT,desired_heading,&desired_heading)
 LOG_GROUP_STOP(lasers)
