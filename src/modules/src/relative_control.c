@@ -19,34 +19,43 @@
 
 // static float RAD2DEG = 57.29578049;
 // static float critical_laser = 0.5; // no laser ranger should ever see lower than this
-static float desired_laser = 2.0; // start correcting if a laser ranger sees smaller than this
-static float desired_velocity = 0.5; // speed in m/s that we aim for
-static float release_laser = 2.5;
-static float int_accumulator = 0.0f;
+static float desired_laser = 2.5; // start correcting if a laser ranger sees smaller than this
+static float desired_velocity = 0.6; // speed in m/s that we aim for
 static bool isInit;
-static bool reset_wall_following = false;
 static bool onGround = true;
 static bool keepFlying = false;
-static bool wall_following = false;
-static bool determine_wall_following_direction = false;
-static int rotate_right = 0;
 static setpoint_t setpoint;
 static float_t relaVarInCtrl[NumUWB][STATE_DIM_rl];
 static float_t inputVarInCtrl[NumUWB][STATE_DIM_rl];
 static uint8_t selfID;
 static float_t height;
+static float old_vx = 0.0f;
+static float old_vy = 0.0f;
+static float rel_x = 0.0f;
+static float rel_y = 0.0f;
+static float heading_accumulator = 0.0f;
+
+#define num_prev_readings 100
+float previous_x[num_prev_readings];
+float previous_y[num_prev_readings];
+
+float x_min = 0.0f;
+float x_max = 0.0f;
+float y_min = 0.0f;
+float y_max = 0.0f;
+float x_range = 0.0f;
+float y_range = 0.0f;
 
 float lasers[4];
 static float relaCtrl_p = 2.0f;
 static float relaCtrl_i = 0.0001f;
 static float relaCtrl_d = 0.01f;
 static float wp_reached_thres = 0.2; // [m]
-static float old_heading_accumulator = 0.0;
 float heading = 0.0f;
 float desired_heading = 0.0f;
 // static float NDI_k = 2.0f;
 static char c = 0; // monoCam
-float search_range = 10.0; // search range in meters
+float search_range = 20.0; // search range in meters
 
 float min_laser = 10.0f;
 int laser_decision;
@@ -137,16 +146,6 @@ static void setHoverSetpoint(setpoint_t *setpoint, float vx, float vy, float z, 
   commanderSetSetpoint(setpoint, 3);
 }
 
-static void flyRandomIn1meter(void){
-  float_t rand_x = (rand()/(float)RAND_MAX)*(1.0f)-0.5f;
-  float_t rand_y = (rand()/(float)RAND_MAX)*(1.0f)-0.5f;
-
-  for (int i=1; i<100; i++) {
-    setHoverSetpoint(&setpoint, rand_x, rand_y, height, 0);
-    vTaskDelay(M2T(10));
-  }
-
-}
 
 void flyVerticalInterpolated(float startz, float endz, float interpolate_time) {
     setpoint_t setpoint;
@@ -178,6 +177,7 @@ bool check_collision(void)
   return collision;
 }
 
+
 float get_distance_points(struct Point p1, struct Point p2)
 {
   return sqrtf(pow((p2.x-p1.x),2)+pow((p2.y-p1.y),2));
@@ -185,7 +185,6 @@ float get_distance_points(struct Point p1, struct Point p2)
 
 void relativeControlTask(void* arg)
 {
-  static uint32_t ctrlTick;
   systemWaitStart();
   // height = (float)selfID*0.1f+0.2f;
   height = 1.5f;
@@ -200,6 +199,18 @@ void relativeControlTask(void* arg)
     vTaskDelay(10);
     getDistances(lasers);
     keepFlying = command_share(selfID, keepFlying);
+    
+    point_t state;
+    estimatorKalmanGetEstimatedPos(&state); //read agent state from kalman filter
+    agent_pos.x = state.x;
+    agent_pos.y = state.y;
+
+
+    
+    // float prev_x[pos_hist];
+    // append_array(prev_x,5.0,pos_hist);
+    // avg_x = get_average(prev_x,pos_hist);
+    // float prev_y[pos_hist];
     // DEBUG_PRINT("%d %d \n", keepFlying,relativeInfoRead((float_t *)relaVarInCtrl, (float_t *)inputVarInCtrl) );
     // if(relativeInfoRead((float_t *)relaVarInCtrl, (float_t *)inputVarInCtrl) && keepFlying){
     if(keepFlying){
@@ -211,154 +222,110 @@ void relativeControlTask(void* arg)
         }
 
         onGround = false;
-        ctrlTick = xTaskGetTickCount();
       }
 
       // control loop
       // setHoverSetpoint(&setpoint, 0, 0, height, 0); // hover
-      uint32_t tickInterval = xTaskGetTickCount() - ctrlTick;
-      if( tickInterval < 200){
-        flyRandomIn1meter(); // random flight within first 10 seconds
-      }
-      else
+      point_t state;
+      random_point.x = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range;
+      random_point.y = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range;
+      goal = random_point;
+      estimatorKalmanGetEstimatedPos(&state); //read agent state from kalman filter
+      agent_pos.x = state.x;
+      agent_pos.y = state.y;
+      wp_dist = get_distance_points(agent_pos,random_point);
+
+
+    // patter detection
+    for (int i = num_prev_readings-1 ; i >0; i--)
+    {
+      previous_x[i] = previous_x[i-1];
+      previous_y[i] = previous_y[i-1];
+    }
+    previous_x[0] = agent_pos.x;
+    previous_y[0] = agent_pos.y;
+
+    x_min = 1000.0f;
+    y_min = 1000.0f;
+    x_max = -1000.0f;
+    y_max = -1000.0f;
+    for (int i = 0; i < num_prev_readings ; i++)
+    {
+      if (previous_x[i] > x_max)
       {
-        point_t state;
-        random_point.x = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range;
-        random_point.y = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range;
-        goal = random_point;
+        x_max = previous_x[i];
+      }
+      if (previous_x[i] < x_min)
+      {
+        x_min = previous_x[i];
+      }
+
+      if (previous_y[i] > y_max)
+      {
+        y_max = previous_y[i];
+      }
+      if (previous_y[i] < y_min)
+      {
+        y_min = previous_y[i];
+      }
+    }
+
+    x_range = (x_max-x_min);
+    y_range = (y_max-y_min);
+    
+
+
+
         // float accumulator_obs_avoidance = 0.0f;
 
-        uint32_t follow_reset_tick = xTaskGetTickCount();
-        for (int i = 0; i< 70; i++) //time before time-out
+        for (int i = 0; i< 700; i++) //time before time-out
         {
+          if (wp_dist >wp_reached_thres)
+          {
           estimatorKalmanGetEstimatedPos(&state); //read agent state from kalman filter
           relativeInfoRead((float_t *)relaVarInCtrl, (float_t *)inputVarInCtrl); //get relative state from other agents
           getDistances(lasers); // get laser ranger readings, order: front, left, back, right
           // min_laser = get_min(lasers); // get minimum value of laser rangers
           agent_pos.x = state.x;
           agent_pos.y = state.y;
+          rel_x = goal.x-agent_pos.x;
+          rel_y = goal.y-agent_pos.y;
           wp_dist = get_distance_points(agent_pos,random_point);
+
+
 
           if ( wp_dist > wp_reached_thres)
           {
- 
-
-          float heading_accumulator = 0.0f;
-          //avoid obstacle
-          // for all lasers
-          // check if wall following
-          reset_wall_following = true;
-          for (int i =0; i<4; i++)
-          {
-            if (lasers[i] < release_laser)
-            {
-              
-              if (lasers[i] < desired_laser)
-              {
-                reset_wall_following = false;
-                if (wall_following == false)
-                {
-                  determine_wall_following_direction = true;
-                  wall_following = true;
-                }
-                else
-                {
-                  determine_wall_following_direction = false;
-                }
-              }
-            }
-          }
-          if (reset_wall_following)
-          {
-            follow_reset_tick = xTaskGetTickCount();
-            wall_following = false;
-          }
-          if (wall_following)
-          {
-            for (int i = 0; i<4; i++ )
-            {
-              if (lasers[i]< desired_laser)
-              {
-                float laser_val = lasers[i];
-                int_accumulator += powf((desired_laser-laser_val),2)*0.01f;
-                heading_accumulator += 1.0f*powf((desired_laser-laser_val),2);
-              }
-              // else if (lasers[i] > desired_laser)
-              // {
-              //   float laser_val = lasers[i];
-              //   int_accumulator -= powf((desired_laser-laser_val),2)*0.01f;
-              //   heading_accumulator = heading_accumulator - 2.0f*powf((desired_laser-laser_val),2) ;
-              // }
-
-            }
-          }
-          else
-          {
-            int_accumulator = 0.0f;
-          }
-          
-
-          
-          if (determine_wall_following_direction)
-          {
-            rotate_right = decide_direction(lasers,atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x)))==1;
-            determine_wall_following_direction = false;
-          }
-
-          if (wall_following){
-
-            heading_accumulator = 0.7f*old_heading_accumulator + 0.3f*heading_accumulator;
-            old_heading_accumulator = heading_accumulator;
-          
-
-          
-          }
-          else if ((xTaskGetTickCount()-follow_reset_tick)> 5000)
-          {
-            old_heading_accumulator = 0.0f;
-            follow_reset_tick = xTaskGetTickCount();
-          }
-          else{
-            heading_accumulator = old_heading_accumulator;
-          }
-
-          if (rotate_right == 1)
-          {
-            heading_accumulator = -heading_accumulator;
-          }
-          DEBUG_PRINT("direction: %d  wall following: %d \n",rotate_right, wall_following);
-          // if(decide_direction(lasers,atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x)))==2)
-          // {
-          //   heading_accumulator = 0.0f;
-          //   wall_following = false;
-          //   determine_wall_following_direction = false;
-          // }
-
           heading = atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x)) + heading_accumulator; // heading in deg (ENU) to desired waypoint
           desired_heading = atan2f((goal.y-agent_pos.y),(goal.x-agent_pos.x));
           vx = desired_velocity*cosf(heading);
-          vy = desired_velocity*sinf(heading);
+          vy = desired_velocity*sinf(heading);          
 
-
-
+          // add repulsive forces from lasers
+          for (int i = 0; i < 4; i++)
+          {
+            if (lasers[i] < desired_laser)
+            {
+              float laser_heading = (float)(i)*(float)(M_PI_2);
+              float laser_repulse_heading = laser_heading + (float)(M_PI);
+              vx += cosf(laser_repulse_heading)*2.0f*powf((desired_laser-lasers[i]),2);
+              vy += sinf(laser_repulse_heading)*2.0f*powf((desired_laser-lasers[i]),2);
+            }
+          }
           
-          // else
-          // {
-          //   if(check_collision())
-          //   {
-          //     random_point.x = (rand()/(float)RAND_MAX)*search_range;
-          //     random_point.y = (rand()/(float)RAND_MAX)*search_range;
-          //     // give some time to get away
-          //     for (int i = 0; i <10 ; i++)
-          //     {
-          //       setHoverSetpoint(&setpoint,random_point.x,random_point.y,height,0);
-          //       vTaskDelay(M2T(100));
-          //     }
-          //   }
-          // }
-          
+          //scale back to desired velocity
+          float vector_size = sqrtf(powf(vx,2)+powf(vy,2));
+          vx = vx/vector_size*desired_velocity;
+          vy = vy/vector_size*desired_velocity;
+
+          vx = 0.1f*old_vx + 0.9f * vx;
+          vy = 0.1f*old_vy + 0.9f * vy;
+
+          old_vx = vx;
+          old_vy = vy;
 
           setHoverSetpoint(&setpoint,vx,vy,height,0);
+
           }
           else
           {
@@ -367,8 +334,8 @@ void relativeControlTask(void* arg)
           
           vTaskDelay(M2T(100));
         }
-      }
       
+        }
     }
     else{
       // landing procedure
@@ -411,5 +378,8 @@ LOG_ADD(LOG_FLOAT,left,&lasers[1])
 LOG_ADD(LOG_FLOAT,back,&lasers[2])
 LOG_ADD(LOG_FLOAT,right,&lasers[3])
 LOG_ADD(LOG_FLOAT,heading,&heading)
-LOG_ADD(LOG_FLOAT,desired_heading,&desired_heading)
+LOG_ADD(LOG_FLOAT,rel_x,&rel_x)
+LOG_ADD(LOG_FLOAT,rel_y,&rel_y)
+LOG_ADD(LOG_FLOAT,x_range,&x_range)
+LOG_ADD(LOG_FLOAT,y_range,&y_range)
 LOG_GROUP_STOP(lasers)
