@@ -46,14 +46,20 @@ static float voltage_bias[NumUWB] = {0.0,0.0,0.0};
 static float RS_lp[NumUWB] = {0.0,0.0,0.0};
 // static float NDI_k = 2.0f;
 static char c = 0; // monoCam
-float search_range = 7.0; // search range in meters
+float search_range = 10.0; // search range in meters
 
 // PSO-Specific
 float r_p, r_g, v_x, v_y;
-float rand_p = 0.1;
-float omega = 0.4;
-float phi_p = 0.4;
-float phi_g = 0.6;
+float omega = -0.166;
+float phi_p = -0.466;
+float phi_g = 2.665;
+
+// float omega_pre = 4.315;
+// float phi_p_pre = 6.274;
+// float phi_g_pre = 1.508;
+// float phi_swarm = -0.567;
+// float rand_p_pre = 5.404;
+float update_time = 100.0;
 
 float old_vx = 0.0;
 float old_vy = 0.0;
@@ -98,7 +104,7 @@ struct Line {
   float c; 
 };
 
-struct Point agent_pos,random_point;
+struct Point agent_pos,random_point, swarm_cg;
 struct Point goal = {.x = 0.0, .y= 0.0};
 
 struct gas_Point agent_best = {.x = 0.0f, .y=0.0f, .gas_conc = 0.0f};
@@ -110,6 +116,22 @@ void get_RS(float* R_s)
 {
   uint32_t pin = 10;
   *(R_s) = analogReadVoltage(pin) - voltage_bias[selfID];
+}
+
+void update_swarm_cg(void)
+{
+  swarm_best.x = 0;
+  swarm_best.y = 0;
+  for(int i = 0; i<NumUWB; i++)
+  {
+    if ( i != selfID)
+    {
+      swarm_best.x += relaVarInCtrl[i][STATE_rlX];
+      swarm_best.y += relaVarInCtrl[i][STATE_rlY];       
+    }
+    swarm_best.x = swarm_best.x/(NumUWB-1);
+    swarm_best.y = swarm_best.y/(NumUWB-1);
+  }
 }
 
 
@@ -327,32 +349,35 @@ void cap_laser(int* laser)
 
 void compute_directed_wp(void)
 {
-  random_point.x = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range;
-  random_point.y = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range;
   r_g = (rand()/(float)RAND_MAX);
   r_p = (rand()/(float)RAND_MAX);
 
-  v_x = rand_p*(random_point.x)+omega*(goal.x-agent_pos.x)+phi_p*r_p*(agent_best.x-agent_pos.x)+phi_g*r_g*(swarm_best.x-agent_pos.x);
-  v_y = rand_p*(random_point.y)+omega*(goal.y-agent_pos.y)+phi_p*r_p*(agent_best.y-agent_pos.y)+phi_g*r_g*(swarm_best.y-agent_pos.y);
+  v_x = omega*(goal.x-agent_pos.x)+phi_p*r_p*(agent_best.x-agent_pos.x)+phi_g*r_g*(swarm_best.x-agent_pos.x);
+  v_y = omega*(goal.y-agent_pos.y)+phi_p*r_p*(agent_best.y-agent_pos.y)+phi_g*r_g*(swarm_best.y-agent_pos.y);
   goal.x = agent_pos.x + v_x;
   goal.y = agent_pos.y + v_y; 
-  
 }
 
 void compute_random_wp(void)
 {
   random_point.x = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range ;
   random_point.y = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range;
+  // r_g = (rand()/(float)RAND_MAX);
+  // r_p = (rand()/(float)RAND_MAX);
 
-  v_x = 0.5f*(random_point.x)+0.5f*(goal.x-agent_pos.x);
-  v_y = 0.5f*(random_point.y)+0.5f*(goal.y-agent_pos.y);
+  // v_x = rand_p_pre*(random_point.x)+omega_pre*(goal.x-agent_pos.x)+phi_p_pre*r_p*(agent_best.x-agent_pos.x)+phi_g_pre*r_g*(swarm_best.x-agent_pos.x)+phi_swarm*(swarm_cg.x);
+  // v_y = rand_p_pre*(random_point.y)+omega_pre*(goal.y-agent_pos.y)+phi_p_pre*r_p*(agent_best.y-agent_pos.y)+phi_g_pre*r_g*(swarm_best.y-agent_pos.y)+phi_swarm*(swarm_cg.y);
+  
+  // goal.x = agent_pos.x + v_x;
+  // goal.y = agent_pos.y + v_y; 
+  // random_point.x = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range ;
+  // random_point.y = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range;
+
+  v_x = 2.935f*(random_point.x)+0.457f*(goal.x-agent_pos.x);
+  v_y = 2.935f*(random_point.y)+0.457f*(goal.y-agent_pos.y);
   goal.x = agent_pos.x + v_x;
   goal.y = agent_pos.y + v_y; 
 
-  // // DEBUGGING!!!
-  // goal = random_point;
-  // goal.x = 10.0;
-  // goal.y = -10.0;
 }
 
 void update_line_params(struct Line* line)
@@ -713,16 +738,20 @@ void relativeControlTask(void* arg)
           compute_random_wp();
           update_line();
           update_direction();
+          update_time = 79.4;
         }
         else
         {
           compute_directed_wp();
           update_line();
           update_direction();
+          update_time = 11.1;
         }
         status = 0;
 
-        for (int i = 0; i< 150; i++) //time before time-out
+      
+
+        for (int i = 0; i< (int)(update_time*10.0f); i++) //time before time-out
         {
           // update all gas sensors
           get_all_RS(all_RS);
