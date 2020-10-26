@@ -73,10 +73,6 @@ void relativeLocoInit(void)
   isInit = true;
 }
 
-void set_qr(float qr)
-{
-  Qr = qr;
-}
 
 void relativeLocoTask(void* arg)
 {

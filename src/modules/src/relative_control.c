@@ -27,6 +27,7 @@ static float desired_velocity = 0.5; // speed in m/s that we aim for
 static bool isInit;
 static bool onGround = true;
 static bool keepFlying = false;
+static bool left_line = false;
 
 // static bool follow_x = true;
 // static bool wall_following = false;
@@ -67,8 +68,8 @@ float old_vy = 0.0;
 static float swarm_avoid_thres = 0.8; // 
 static float wp_reached_thres = 0.5; // [m]
 static float swarm_avoid_gain = 15.0f;
-static float laser_repulse_gain = 5.0f;
-static float warning_laser = 1.5; // start correcting if a laser ranger sees smaller than this
+static float laser_repulse_gain = 10.0f;
+static float warning_laser = 2.0; // start correcting if a laser ranger sees smaller than this
 static int status = 0;
 static int previous_status = 0;
 
@@ -475,8 +476,8 @@ void repulse_swarm(float* vx, float* vy)
     {
       float laser_heading = (float)(i)*(float)(M_PI_2);
       float laser_repulse_heading = laser_heading + (float)(M_PI);
-      *(vx) += cosf(laser_repulse_heading)*laser_repulse_gain*powf((warning_laser-lasers[i]),2);
-      *(vy) += sinf(laser_repulse_heading)*laser_repulse_gain*powf((warning_laser-lasers[i]),2);
+      *(vx) += cosf(laser_repulse_heading)*laser_repulse_gain*((warning_laser-lasers[i]));
+      *(vy) += sinf(laser_repulse_heading)*laser_repulse_gain*((warning_laser-lasers[i]));
     }
   }
 
@@ -502,6 +503,26 @@ void update_follow_laser(void)
   {
     following_laser = lower_idx;
   }
+}
+
+bool back_in_line(void)
+{
+  if (get_distance_to_line(line_to_goal,agent_pos) > line_max_dist)
+  {
+    left_line = true;
+  }
+
+  if (left_line == true && get_distance_to_line(line_to_goal,agent_pos) < line_max_dist)
+  {
+    left_line = false;
+    return true;
+  }
+  else
+  {
+    return false;
+  }
+  
+
 }
 
 void follow_line( float* v_x, float* v_y)
@@ -649,9 +670,6 @@ void update_status(void)
 {
 
 current_ticks = xTaskGetTickCount();
-
-
-
   if (check_collision())
   {
     status = 2;
@@ -663,7 +681,7 @@ current_ticks = xTaskGetTickCount();
     update_direction();
   }
   // else if (free_to_goal() && previous_status == 1)
-  else if ((current_ticks-started_wall_avoid_ticks)>ticks_to_follow && previous_status == 1)
+  else if ( back_in_line() && previous_status == 1)
   {
     status = 0;
     update_line();
@@ -673,7 +691,6 @@ current_ticks = xTaskGetTickCount();
   {
     status = 1;
     wall_follow_init();
-    started_wall_avoid_ticks = xTaskGetTickCount();
   }
   previous_status = status;
 
@@ -699,8 +716,8 @@ void relativeControlTask(void* arg)
     update_lowpass(all_RS);
     
     // DEBUG_PRINT("%d %d \n", keepFlying,relativeInfoRead((float_t *)relaVarInCtrl, (float_t *)inputVarInCtrl) );
-    if(relativeInfoRead((float_t *)relaVarInCtrl, (float_t *)inputVarInCtrl) && keepFlying){
-    // if(keepFlying){
+    // if(relativeInfoRead((float_t *)relaVarInCtrl, (float_t *)inputVarInCtrl) && keepFlying){
+    if(keepFlying){
       // take off
       
       if(onGround){
@@ -749,8 +766,6 @@ void relativeControlTask(void* arg)
         }
         status = 0;
 
-      
-
         for (int i = 0; i< (int)(update_time*10.0f); i++) //time before time-out
         {
           // update all gas sensors
@@ -777,7 +792,7 @@ void relativeControlTask(void* arg)
           case 0:
             follow_line(&vx,&vy);
             break;
-          
+
           case 1:
             follow_wall(&vx,&vy);
             break;
@@ -851,4 +866,5 @@ LOG_ADD(LOG_FLOAT,swarm_best_y,&swarm_best.y)
 LOG_ADD(LOG_FLOAT,gas0_lp,&RS_lp[0])
 LOG_ADD(LOG_FLOAT,gas1_lp,&RS_lp[1])
 LOG_ADD(LOG_FLOAT,gas2_lp,&RS_lp[2])
+LOG_ADD(LOG_INT32,status,&status)
 LOG_GROUP_STOP(PSO)
