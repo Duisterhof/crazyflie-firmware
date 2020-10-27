@@ -28,6 +28,7 @@ static bool isInit;
 static bool onGround = true;
 static bool keepFlying = false;
 static int num_cycl;
+static float best_seen_conc = 0.0f;
 
 // static bool follow_x = true;
 // static bool wall_following = false;
@@ -51,24 +52,23 @@ float search_range = 10.0; // search range in meters
 
 // PSO-Specific
 float r_p, r_g, v_x, v_y;
-float omega = -0.166;
-float phi_p = -0.466;
-float phi_g = 2.665;
+float omega = 0.119;
+float phi_p = -0.282;
+float phi_g = 3.911;
 
 float old_vx = 0.0;
 float old_vy = 0.0;
 
-static float swarm_avoid_thres = 0.8; // 
-static float swarm_min_thres = 0.05;
-static float wp_reached_thres = 0.5; // [m]
-static float swarm_avoid_gain = 15.0f;
-static float laser_repulse_gain = 5.0f;
-static float warning_laser = 1.5; // start correcting if a laser ranger sees smaller than this
+static float swarm_avoid_thres = 1.159; // 
+static float swarm_min_thres = 0.10;
+static float wp_reached_thres = 0.935; // [m]
+static float swarm_avoid_gain = 2.757f;
+static float laser_repulse_gain = 13.701f;
+static float warning_laser = 1.129; // start correcting if a laser ranger sees smaller than this
 static int status = 0;
 static int previous_status = 0;
 
-float laser_repulsion_thresh = 1.5;
-float line_max_dist = 0.2;
+float line_max_dist = 0.202;
 float line_heading = 0.0;
 
 int upper_idx, lower_idx, following_laser;
@@ -336,8 +336,8 @@ void compute_random_wp(void)
   random_point.x = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range ;
   random_point.y = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range;
 
-  v_x = 2.935f*(random_point.x)+0.457f*(goal.x-agent_pos.x);
-  v_y = 2.935f*(random_point.y)+0.457f*(goal.y-agent_pos.y);
+  v_x = 0.655f*(random_point.x)-1.841f*(goal.x-agent_pos.x);
+  v_y = 0.655f*(random_point.y)-1.841f*(goal.y-agent_pos.y);
   goal.x = agent_pos.x + v_x;
   goal.y = agent_pos.y + v_y; 
 }
@@ -679,15 +679,14 @@ void relativeControlTask(void* arg)
     update_lowpass(all_RS);
     
     // DEBUG_PRINT("%d %d \n", keepFlying,relativeInfoRead((float_t *)relaVarInCtrl, (float_t *)inputVarInCtrl) );
-    // if(relativeInfoRead((float_t *)relaVarInCtrl, (float_t *)inputVarInCtrl) && keepFlying){
-    if(keepFlying){
+    if(relativeInfoRead((float_t *)relaVarInCtrl, (float_t *)inputVarInCtrl) && keepFlying){
+    // if(keepFlying){
       // take off
       
       if(onGround){
         xTaskGetTickCount();
         // flyVerticalInterpolated(0.0,height,3000.0f);
-        set_voltage_offset();
-        reset_lp();
+
         estimatorKalmanInit(); // reseting kalman filter
         for (int i=0; i<50; i++) {
           setHover_pos_Setpoint(&setpoint, 0, 0, 0.3f, 0);
@@ -696,7 +695,8 @@ void relativeControlTask(void* arg)
         for (int i=0; i<20; i++) {
           flyRandomIn1meter();
         }
-
+        set_voltage_offset();
+        reset_lp();
         onGround = false;
       }
       else
@@ -713,19 +713,19 @@ void relativeControlTask(void* arg)
         // compute next wp
         
 
-        if (swarm_best.gas_conc < 0.2f)
+        if (swarm_best.gas_conc < 0.1f)
         {
           compute_random_wp();
           update_line();
           update_direction();
-          num_cycl = 794;
+          num_cycl = 763;
         }
         else
         {
           compute_directed_wp();
           update_line();
           update_direction();
-          num_cycl = 111;
+          num_cycl = 9;
         }
         status = 0;
 
@@ -747,6 +747,11 @@ void relativeControlTask(void* arg)
           
           if (wp_dist < wp_reached_thres )
           {
+            break;
+          }
+          else if (swarm_best.gas_conc > 0.1f && swarm_best.gas_conc > best_seen_conc)
+          {
+            best_seen_conc = swarm_best.gas_conc;
             break;
           }
 
