@@ -38,6 +38,7 @@ static float_t inputVarInCtrl[NumUWB][STATE_DIM_rl];
 static uint8_t selfID;
 static float_t height;
 
+static float init_dist_goal = 0.0f;
 float lasers[4];
 static float relaCtrl_p = 2.0f;
 static float desired_heading = 0.0f;
@@ -49,26 +50,32 @@ static float RS_lp[NumUWB] = {0.0,0.0,0.0};
 // static float NDI_k = 2.0f;
 static char c = 0; // monoCam
 float search_range = 10.0; // search range in meters
-
-// PSO-Specific
-float r_p, r_g, v_x, v_y;
-float omega = 0.119;
-float phi_p = -0.282;
-float phi_g = 3.911;
-
 float old_vx = 0.0;
 float old_vy = 0.0;
 
-static float swarm_avoid_thres = 1.159; // 
-static float swarm_min_thres = 0.10;
-static float wp_reached_thres = 0.935; // [m]
-static float swarm_avoid_gain = 2.757f;
-static float laser_repulse_gain = 13.701f;
-static float warning_laser = 1.129; // start correcting if a laser ranger sees smaller than this
+// PSO-Specific
+float r_p, r_g, v_x, v_y;
+float omega = 0.361;
+float phi_p = -0.031;
+float phi_g = 3.721;
+
+float omega_pre = -1.391;
+float rand_p = 0.687;
+float update_time_pre = 13.784;
+float update_time_after = 13.784;
+
+static float wp_reached_thres = 4.823; // [m]
+static float warning_laser = 1.583; // start correcting if a laser ranger sees smaller than this
+static float swarm_avoid_thres = 0.647; // 
+static float line_max_dist = 0.161;
+static float laser_repulse_gain = 0.887;
+static float swarm_avoid_gain = 14.347;
+
 static int status = 0;
 static int previous_status = 0;
+static float swarm_min_thres = 0.10;
 
-float line_max_dist = 0.202;
+
 float line_heading = 0.0;
 
 int upper_idx, lower_idx, following_laser;
@@ -336,8 +343,8 @@ void compute_random_wp(void)
   random_point.x = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range ;
   random_point.y = (rand()/(float)RAND_MAX)*search_range-0.5f*search_range;
 
-  v_x = 0.655f*(random_point.x)-1.841f*(goal.x-agent_pos.x);
-  v_y = 0.655f*(random_point.y)-1.841f*(goal.y-agent_pos.y);
+  v_x = rand_p*(random_point.x)+omega_pre*(goal.x-agent_pos.x);
+  v_y = rand_p*(random_point.y)+omega_pre*(goal.y-agent_pos.y);
   goal.x = agent_pos.x + v_x;
   goal.y = agent_pos.y + v_y; 
 }
@@ -460,10 +467,17 @@ bool back_in_line(void)
   {
     left_line = true;
   }
-  if (left_line == true && get_distance_to_line(line_to_goal,agent_pos) < line_max_dist)
+  if (left_line == true && get_distance_to_line(line_to_goal,agent_pos) < line_max_dist) 
   {
     left_line = false;
-    return true;
+    if (get_distance_points(agent_pos,goal) < init_dist_goal)
+    {
+      return true;
+    }
+    else
+    {
+      return true;
+    }
   }
   else
   {
@@ -510,6 +524,7 @@ bool free_to_goal(void)
 
 void wall_follow_init(void)
 {
+  init_dist_goal = get_distance_points(agent_pos,goal);
   float temp_line_heading = get_heading_to_point(agent_pos,goal); // used to follow the line
   cap_heading(&temp_line_heading);
 
@@ -718,14 +733,14 @@ void relativeControlTask(void* arg)
           compute_random_wp();
           update_line();
           update_direction();
-          num_cycl = 763;
+          num_cycl = (int)(update_time_pre*10.0f);
         }
         else
         {
           compute_directed_wp();
           update_line();
           update_direction();
-          num_cycl = 9;
+          num_cycl = (int)(update_time_after*10.0f);
         }
         status = 0;
 
