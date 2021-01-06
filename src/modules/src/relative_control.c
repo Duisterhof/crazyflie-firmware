@@ -232,17 +232,17 @@ void reset_lp(void)
   }
 }
 
-static void flyRandomIn1meter(void){
-  float_t rand_x = (rand()/(float)RAND_MAX)*(1.0f)-0.5f;
-  float_t rand_y = (rand()/(float)RAND_MAX)*(1.0f)-0.5f;
+// static void flyRandomIn1meter(void){
+//   float_t rand_x = (rand()/(float)RAND_MAX)*(1.0f)-0.5f;
+//   float_t rand_y = (rand()/(float)RAND_MAX)*(1.0f)-0.5f;
   
-  for (int i=1; i<100; i++) {
-    setHover_pos_Setpoint(&setpoint, rand_x, rand_y, height, 0);
-    vTaskDelay(M2T(10));
-    get_all_RS(all_RS);
-    update_lowpass(all_RS);
-  }
-}
+//   for (int i=1; i<100; i++) {
+//     setHover_pos_Setpoint(&setpoint, rand_x, rand_y, height, 0);
+//     vTaskDelay(M2T(10));
+//     get_all_RS(all_RS);
+//     update_lowpass(all_RS);
+//   }
+// }
 
 
 void flyVerticalInterpolated(float startz, float endz, float interpolate_time) {
@@ -690,13 +690,14 @@ void relativeControlTask(void* arg)
         set_voltage_offset();
         reset_lp();
         estimatorKalmanInit(); // reseting kalman filter
-        for (int i=0; i<50; i++) {
-          setHover_pos_Setpoint(&setpoint, 0, 0, 0.3f, 0);
+        while(keepFlying) {
+          keepFlying = command_share(selfID, keepFlying);
+          setHover_pos_Setpoint(&setpoint, 0, 0, height, 0);
           vTaskDelay(M2T(100));
         }
-        for (int i=0; i<20; i++) {
-          flyRandomIn1meter();
-        }
+        // for (int i=0; i<20; i++) {
+        //   flyRandomIn1meter();
+        // }
 
         onGround = false;
         // initialize a random goal in search area
